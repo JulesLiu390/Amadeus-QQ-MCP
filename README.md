@@ -1,4 +1,4 @@
-# qq-agent-mcp
+# Amadeus-QQ-MCP
 
 MCP Server，通过 NapCatQQ (OneBot v11) 让 AI 客户端收发 QQ 消息。支持群聊和私聊。
 
