@@ -1,0 +1,21 @@
+[project]
+name = "qq-agent-mcp"
+version = "0.1.0"
+description = "MCP Server wrapping NapCatQQ for AI-driven QQ interactions"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp[cli]>=1.0.0",
+    "aiohttp>=3.9.0",
+]
+
+[project.scripts]
+qq-agent-mcp = "qq_agent_mcp.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qq_agent_mcp"]

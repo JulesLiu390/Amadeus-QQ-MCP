@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.venv/
+
+# uv
+uv.lock
+
+# macOS
+.DS_Store
+
+# NapCat runtime data & config (keep folder structure, ignore contents)
+napcat/config/*
+napcat/qq-data/*
+!napcat/config/.gitkeep
+!napcat/qq-data/.gitkeep
+!napcat/README.md
+
+# IDE
+.idea/
+.vscode/
+
+# SQLite databases (dev artifacts)
+*.db
+*.db-shm
+*.db-wal

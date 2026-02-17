@@ -1,0 +1,15 @@
+services:
+  napcat:
+    image: mlikiowa/napcat-docker:latest
+    container_name: napcat
+    restart: always
+    environment:
+      - NAPCAT_UID=${NAPCAT_UID:-501}
+      - NAPCAT_GID=${NAPCAT_GID:-20}
+    ports:
+      - "3000:3000"   # OneBot HTTP API
+      - "3001:3001"   # OneBot WebSocket
+      - "6099:6099"   # NapCat WebUI
+    volumes:
+      - ./napcat/config:/app/napcat/config       # NapCat 配置持久化
+      - ./napcat/qq-data:/app/.config/QQ         # QQ 登录态持久化
