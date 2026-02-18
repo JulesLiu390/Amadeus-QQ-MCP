@@ -53,7 +53,6 @@ class MessageBuffer:
         self.compressed_summary: str | None = None
         self._msg_since_compress: int = 0
         self._compress_every = compress_every
-        self._summary_max_chars = 2000
         self._compress_pending = False
         self._compress_all_pending = False
 
@@ -108,10 +107,7 @@ class MessageBuffer:
     def apply_summary(self, new_summary: str) -> None:
         """Append a compressed summary block."""
         if self.compressed_summary:
-            combined = self.compressed_summary + "\n" + new_summary
-            if len(combined) > self._summary_max_chars:
-                combined = "..." + combined[-(self._summary_max_chars - 3):]
-            self.compressed_summary = combined
+            self.compressed_summary = self.compressed_summary + "\n" + new_summary
         else:
             self.compressed_summary = new_summary
 

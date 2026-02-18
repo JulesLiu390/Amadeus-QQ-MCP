@@ -1,7 +1,6 @@
 """MCP Tools definitions."""
 
 import asyncio
-import json
 import logging
 import random
 import re
@@ -10,7 +9,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from mcp.server.fastmcp import Context
-from mcp.types import ImageContent, SamplingMessage, TextContent
+from mcp.types import SamplingMessage, TextContent
 
 from .config import Config
 from .context import ContextManager
@@ -65,7 +64,11 @@ def _chunk_message(text: str, max_chars: int = CHUNK_MAX_CHARS) -> list[str]:
     paragraphs = [p.strip() for p in paragraphs if p.strip()]
 
     # Level-1: sentence-enders (punctuation kept via lookbehind)
-    _sentence_re = re.compile(r'(?<=[.!?。！？~\n])')
+    # English period only splits when NOT preceded by a digit (avoids "1. item" or "v2.0")
+    _sentence_re = re.compile(
+        r'(?<=(?<!\d)[.])'
+        r'|(?<=[!?。！？~\n])'
+    )
     # Level-2: clause delimiters (consumed = removed)
     _clause_re = re.compile(
         r'[，,、：:；;]'
@@ -200,15 +203,17 @@ def register_tools(
         }
 
     @mcp.tool()
+    @mcp.tool()
     async def get_recent_context(
         target: str,
         target_type: str = "group",
         limit: int = 200,
-    ) -> list:
+    ) -> dict:
         """Get recent message context for a monitored group or whitelisted friend.
 
         Returns all buffered messages (backfill + real-time) without compression.
         Use compress_context to manually compress when needed.
+        Images are returned as URL strings in each message's image_urls field.
 
         Args:
             target: Group ID or friend QQ ID.
@@ -249,41 +254,94 @@ def register_tools(
                 pass
             result["friend_name"] = friend_name
 
-        # Build interleaved content list:
-        #   1. Metadata TextContent (JSON)
-        #   2. Per-message TextContent + optional ImageContent(s)
-        messages = result.pop("messages", [])
+        return result
 
-        # Metadata header
-        content_items: list[TextContent | ImageContent] = [
-            TextContent(type="text", text=json.dumps(result, ensure_ascii=False))
-        ]
+    @mcp.tool()
+    async def batch_get_recent_context(
+        targets: list[dict],
+        limit: int = 50,
+    ) -> dict:
+        """Batch query recent message context for multiple targets.
 
-        # Per-message items (JSON format)
-        for msg_dict in messages:
-            urls = msg_dict.pop("image_urls", None) or []
+        More efficient than calling get_recent_context multiple times:
+        uses at most 2 OneBot API calls (group list + friend list) regardless
+        of how many targets are queried.
 
-            msg_json = {
-                "message_id": msg_dict["message_id"],
-                "timestamp": msg_dict.get("timestamp", ""),
-                "sender_id": msg_dict["sender_id"],
-                "sender_name": msg_dict["sender_name"],
-                "content": msg_dict["content"],
-                "is_at_me": msg_dict.get("is_at_me", False),
-                "is_self": msg_dict.get("is_self", False),
-            }
+        Args:
+            targets: List of dicts, each with "target" (ID) and optional
+                     "target_type" ("group" or "private", default "group").
+                     Example: [{"target": "123", "target_type": "group"},
+                               {"target": "456", "target_type": "private"}]
+            limit: Number of recent messages per target (default 50).
+        """
+        limit = max(1, min(limit, 200))
 
-            content_items.append(TextContent(type="text", text=json.dumps(msg_json, ensure_ascii=False)))
+        # Classify targets
+        group_ids: list[str] = []
+        friend_ids: list[str] = []
+        for t in targets:
+            tt = t.get("target_type", "group")
+            tid = str(t.get("target", ""))
+            if tt == "group":
+                group_ids.append(tid)
+            elif tt == "private":
+                friend_ids.append(tid)
 
-            # Append image URLs inline as ImageContent
-            for url in urls:
-                content_items.append(ImageContent(
-                    type="image",
-                    data=url,
-                    mimeType="image/jpeg",
-                ))
+        # Batch fetch names — at most 2 API calls total
+        group_name_map: dict[str, str] = {}
+        if group_ids:
+            try:
+                all_groups = await bot.get_group_list()
+                group_name_map = {
+                    str(g.get("group_id", "")): g.get("group_name", "")
+                    for g in all_groups
+                }
+            except Exception as e:
+                logger.warning("batch: failed to get group list: %s", e)
 
-        return content_items
+        friend_name_map: dict[str, str] = {}
+        if friend_ids:
+            try:
+                all_friends = await bot.get_friend_list()
+                friend_name_map = {
+                    str(f.get("user_id", "")): f.get("nickname", f.get("remark", ""))
+                    for f in all_friends
+                }
+            except Exception as e:
+                logger.warning("batch: failed to get friend list: %s", e)
+
+        # Build results — pure memory reads
+        results: list[dict] = []
+        for t in targets:
+            target = str(t.get("target", ""))
+            target_type = t.get("target_type", "group")
+
+            # Whitelist check
+            if target_type == "group" and not config.is_group_monitored(target):
+                results.append({"target": target, "target_type": target_type,
+                                "error": f"Group {target} is not monitored"})
+                continue
+            if target_type == "private" and not config.is_friend_monitored(target):
+                results.append({"target": target, "target_type": target_type,
+                                "error": f"User {target} is not in friends whitelist"})
+                continue
+            if target_type not in ("group", "private"):
+                results.append({"target": target, "target_type": target_type,
+                                "error": f"Invalid target_type: {target_type}"})
+                continue
+
+            # Read from memory buffer
+            result = ctx.get_context(target, target_type, limit)
+
+            # Attach name from pre-fetched map (0 API calls)
+            if target_type == "group":
+                result["group_name"] = group_name_map.get(target, "")
+            else:
+                result["friend_name"] = friend_name_map.get(target, "")
+
+            results.append(result)
+
+        return {"results": results, "count": len(results)}
 
     @mcp.tool()
     async def send_message(
@@ -453,7 +511,7 @@ async def _llm_compress(ctx_mcp: Context, messages: list) -> str:
                 ),
             )
         ],
-        max_tokens=500,
+        max_tokens=8192,
         system_prompt="你是一个聊天记录摘要助手。只输出摘要内容，不要添加任何前缀或解释。",
     )
 
