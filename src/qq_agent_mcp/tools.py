@@ -23,7 +23,7 @@ RATE_LIMIT_SECONDS = 3.0
 CST = timezone(timedelta(hours=8))
 
 # Chunking config
-CHUNK_MAX_CHARS = 20
+CHUNK_MAX_CHARS = 30
 # Delay: ms per character (scales with chunk length)
 HUMAN_DELAY_MS_PER_CHAR = 80  # ~80ms per char ≈ real typing speed
 HUMAN_DELAY_MIN_MS = 300
@@ -58,6 +58,11 @@ def _chunk_message(text: str, max_chars: int = CHUNK_MAX_CHARS) -> list[str]:
     text = text.strip()
     if not text:
         return []
+
+    # Protect file extensions from being split on the dot (case-insensitive)
+    _PLACEHOLDER = "\x00"
+    _ext_re = re.compile(r'\.(?:md|jpeg|jpg|png|py|js|ts|json|html|css|txt|csv|pdf|zip|gif|svg|mp3|mp4|wav)\b', re.IGNORECASE)
+    text = _ext_re.sub(lambda m: _PLACEHOLDER + m.group(0)[1:], text)
 
     # Step 1: Split on \n\n unconditionally
     paragraphs = re.split(r'\n\n+', text)
@@ -111,7 +116,8 @@ def _chunk_message(text: str, max_chars: int = CHUNK_MAX_CHARS) -> list[str]:
                 grouped2 = _group_parts(clauses, max_chars)
                 chunks.extend(grouped2)
 
-    return [c for c in chunks if c]
+    # Restore protected file extensions
+    return [c.replace(_PLACEHOLDER, ".") for c in chunks if c]
 
 
 def register_tools(
@@ -349,6 +355,7 @@ def register_tools(
         content: str,
         target_type: str = "group",
         reply_to: str | None = None,
+        split_content: bool = True,
     ) -> dict:
         """Send a message to a monitored group or whitelisted friend.
 
@@ -357,6 +364,9 @@ def register_tools(
             content: Text message content.
             target_type: "group" (default) or "private".
             reply_to: Optional message ID to reply to.
+            split_content: Whether to split long messages into multiple chunks
+                with typing delay (default True). Set to False to send as a
+                single message without splitting.
         """
         # Whitelist check
         if target_type == "group":
@@ -383,8 +393,11 @@ def register_tools(
             }
         _last_send[key] = now
 
-        # Split long messages into chunks
-        chunks = _chunk_message(content)
+        # Split long messages into chunks (or send as one)
+        if split_content:
+            chunks = _chunk_message(content)
+        else:
+            chunks = [content.strip()] if content.strip() else []
         if not chunks:
             return {"success": False, "error": "Empty message content"}
 
@@ -394,6 +407,10 @@ def register_tools(
 
         try:
             for i, chunk_text in enumerate(chunks):
+                # Strip trailing periods for natural chat style
+                chunk_text = chunk_text.rstrip("。.")
+                if not chunk_text:
+                    continue
                 msg = [{"type": "text", "data": {"text": chunk_text}}]
                 rto = first_reply_to if i == 0 else None
 
