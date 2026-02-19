@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
@@ -29,6 +30,7 @@ class Message:
     is_at_me: bool = False
     is_self: bool = False
     image_urls: list[str] = field(default_factory=list)
+    received_at: float = field(default_factory=time.time)  # local monotonic clock
 
     def to_dict(self) -> dict:
         d = {
@@ -50,6 +52,7 @@ class MessageBuffer:
 
     def __init__(self, maxlen: int = 100, compress_every: int = 30):
         self.messages: deque[Message] = deque(maxlen=maxlen)
+        self._seen_ids: set[str] = set()  # for dedup by message_id
         self.compressed_summary: str | None = None
         self._msg_since_compress: int = 0
         self._compress_every = compress_every
@@ -57,7 +60,18 @@ class MessageBuffer:
         self._compress_all_pending = False
 
     def add(self, msg: Message) -> None:
-        """Add a message. Marks compression as pending when threshold is reached."""
+        """Add a message with dedup by message_id.
+
+        Marks compression as pending when threshold is reached.
+        """
+        if msg.message_id and msg.message_id in self._seen_ids:
+            return  # duplicate (e.g. direct write + WebSocket echo)
+        if msg.message_id:
+            self._seen_ids.add(msg.message_id)
+            # Prevent unbounded growth — trim oldest IDs when set is large
+            max_ids = (self.messages.maxlen or 100) * 2
+            if len(self._seen_ids) > max_ids:
+                self._seen_ids = {m.message_id for m in self.messages if m.message_id}
         self.messages.append(msg)
         self._msg_since_compress += 1
 
@@ -117,6 +131,10 @@ class MessageBuffer:
         """Return the most recent `limit` messages as dicts."""
         msgs = list(self.messages)
         return [m.to_dict() for m in msgs[-limit:]]
+
+    def get_since(self, since: float) -> list[Message]:
+        """Return messages with received_at >= since."""
+        return [m for m in self.messages if m.received_at >= since]
 
     @property
     def count(self) -> int:
@@ -237,6 +255,24 @@ class ContextManager:
             "message_count": buf.count,
             "messages": buf.get_recent(limit),
         }
+
+    def add_message(
+        self, target: str, target_type: str, msg: Message,
+    ) -> None:
+        """Directly add a message to the buffer for a target."""
+        key = self._buffer_key(target_type, target)
+        buf = self._get_or_create_buffer(key)
+        buf.add(msg)
+
+    def get_messages_since(
+        self, target: str, target_type: str, since: float,
+    ) -> list[Message]:
+        """Return messages received after `since` for a target."""
+        key = self._buffer_key(target_type, target)
+        buf = self._buffers.get(key)
+        if buf is None:
+            return []
+        return buf.get_since(since)
 
     @property
     def buffer_stats(self) -> dict:

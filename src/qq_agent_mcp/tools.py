@@ -12,7 +12,7 @@ from mcp.server.fastmcp import Context
 from mcp.types import SamplingMessage, TextContent
 
 from .config import Config
-from .context import ContextManager
+from .context import ContextManager, Message
 from .onebot import OneBotClient
 
 logger = logging.getLogger(__name__)
@@ -390,6 +390,7 @@ def register_tools(
 
         sent_ids: list[str] = []
         first_reply_to = reply_to  # Only first chunk is a reply
+        t0 = time.time()  # record baseline for incremental message snapshot
 
         try:
             for i, chunk_text in enumerate(chunks):
@@ -401,7 +402,19 @@ def register_tools(
                 else:
                     result = await bot.send_private_msg(target, msg, reply_to=rto)
 
-                sent_ids.append(str(result.get("message_id", "")))
+                msg_id = str(result.get("message_id", ""))
+                sent_ids.append(msg_id)
+
+                # Write bot's own message directly into buffer (don't wait for WS echo)
+                bot_msg = Message(
+                    sender_id=config.qq,
+                    sender_name="bot",
+                    content=chunk_text,
+                    timestamp=datetime.now(CST).isoformat(),
+                    message_id=msg_id,
+                    is_self=True,
+                )
+                ctx.add_message(target, target_type, bot_msg)
 
                 # Human-like delay based on chunk length (not after last)
                 if i < len(chunks) - 1:
@@ -418,6 +431,19 @@ def register_tools(
                 }
             return {"success": False, "error": str(e)}
 
+        # Brief wait for WebSocket to deliver group reactions
+        await asyncio.sleep(0.5)
+
+        # Snapshot: all messages since this send_message started (incremental)
+        recent_msgs = ctx.get_messages_since(target, target_type, t0)
+        recent_lines: list[str] = []
+        for m in recent_msgs:
+            if m.is_self:
+                tag = "[bot(self)]"
+            else:
+                tag = f"[{m.sender_name}]"
+            recent_lines.append(f"{tag} {m.content}")
+
         return {
             "success": True,
             "message_ids": sent_ids,
@@ -425,6 +451,7 @@ def register_tools(
             "target": target,
             "target_type": target_type,
             "timestamp": datetime.now(CST).isoformat(),
+            "recent_messages": recent_lines,
         }
 
     @mcp.tool()
