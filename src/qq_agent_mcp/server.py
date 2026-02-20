@@ -39,7 +39,7 @@ async def _wait_ready(bot: OneBotClient, timeout: float = MAX_READY_WAIT) -> boo
 def create_server(config: Config) -> FastMCP:
     """Create and configure the MCP Server."""
     bot = OneBotClient(config.onebot_base_url)
-    ctx = ContextManager(config)
+    ctx = ContextManager(config, bot=bot)
 
     @asynccontextmanager
     async def lifespan(app: FastMCP):

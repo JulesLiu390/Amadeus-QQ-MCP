@@ -209,7 +209,6 @@ def register_tools(
         }
 
     @mcp.tool()
-    @mcp.tool()
     async def get_recent_context(
         target: str,
         target_type: str = "group",

@@ -111,3 +111,11 @@ class OneBotClient:
             "get_group_msg_history", group_id=int(group_id), count=count
         )
         return data.get("messages", []) if data else []
+
+    async def get_forward_msg(self, id: str) -> list[dict]:
+        """Fetch forwarded message content by forward ID.
+
+        Returns a list of message nodes, each with sender info and content.
+        """
+        data = await self._call("get_forward_msg", id=id)
+        return data.get("messages", data.get("message", [])) if data else []

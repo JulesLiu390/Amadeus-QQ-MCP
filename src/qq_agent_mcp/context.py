@@ -141,11 +141,17 @@ class MessageBuffer:
         return len(self.messages)
 
 
+# Forward message expansion limits
+_FORWARD_MAX_DEPTH = 2
+_FORWARD_MAX_MESSAGES = 20
+
+
 class ContextManager:
     """Manages message buffers and the WebSocket event listener."""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, bot=None):
         self.config = config
+        self.bot = bot  # OneBotClient, set before start()
         self._buffers: dict[str, MessageBuffer] = {}
         self._ws_task: asyncio.Task | None = None
         self._running = False
@@ -191,7 +197,7 @@ class ContextManager:
                 for event in messages:
                     sender_id = str(event.get("user_id", event.get("sender", {}).get("user_id", "")))
                     is_self = sender_id == self.config.qq
-                    content, is_at_me, image_urls = self._parse_message_segments(event.get("message", []))
+                    content, is_at_me, image_urls = await self._parse_message_segments(event.get("message", []))
                     if not content.strip():
                         continue
                     sender_name = (
@@ -304,7 +310,7 @@ class ContextManager:
                             if raw_msg.type == aiohttp.WSMsgType.TEXT:
                                 try:
                                     event = json.loads(raw_msg.data)
-                                    self._handle_event(event)
+                                    await self._handle_event(event)
                                 except json.JSONDecodeError:
                                     logger.warning("Invalid JSON from WS: %s", raw_msg.data[:200])
                             elif raw_msg.type == aiohttp.WSMsgType.ERROR:
@@ -329,7 +335,7 @@ class ContextManager:
 
     # ── Event Handling ──────────────────────────────────────
 
-    def _handle_event(self, event: dict) -> None:
+    async def _handle_event(self, event: dict) -> None:
         """Route an OneBot v11 event to the appropriate handler."""
         post_type = event.get("post_type")
         if post_type != "message":
@@ -337,11 +343,11 @@ class ContextManager:
 
         msg_type = event.get("message_type")
         if msg_type == "group":
-            self._handle_group_message(event)
+            await self._handle_group_message(event)
         elif msg_type == "private":
-            self._handle_private_message(event)
+            await self._handle_private_message(event)
 
-    def _handle_group_message(self, event: dict) -> None:
+    async def _handle_group_message(self, event: dict) -> None:
         """Process a group message event."""
         group_id = str(event.get("group_id", ""))
         sender_id = str(event.get("user_id", event.get("sender", {}).get("user_id", "")))
@@ -353,7 +359,7 @@ class ContextManager:
         is_self = sender_id == self.config.qq
 
         # Parse message content and @detection
-        content, is_at_me, image_urls = self._parse_message_segments(event.get("message", []))
+        content, is_at_me, image_urls = await self._parse_message_segments(event.get("message", []))
         if not content.strip():
             return  # Skip empty messages
 
@@ -389,7 +395,7 @@ class ContextManager:
             " [@me]" if is_at_me else "",
         )
 
-    def _handle_private_message(self, event: dict) -> None:
+    async def _handle_private_message(self, event: dict) -> None:
         """Process a private message event."""
         sender_id = str(event.get("user_id", event.get("sender", {}).get("user_id", "")))
 
@@ -399,7 +405,7 @@ class ContextManager:
 
         is_self = sender_id == self.config.qq
 
-        content, _, image_urls = self._parse_message_segments(event.get("message", []))
+        content, _, image_urls = await self._parse_message_segments(event.get("message", []))
         if not content.strip():
             return
 
@@ -425,11 +431,14 @@ class ContextManager:
 
     # ── Message Parsing ─────────────────────────────────────
 
-    def _parse_message_segments(self, segments: list) -> tuple[str, bool, list[str]]:
+    async def _parse_message_segments(
+        self, segments: list, _depth: int = 0,
+    ) -> tuple[str, bool, list[str]]:
         """Parse OneBot v11 message segments into text content.
 
         Returns (content_string, is_at_me, image_urls).
         Handles both array format and plain string format.
+        Expands forward messages up to _FORWARD_MAX_DEPTH layers.
         """
         if isinstance(segments, str):
             return segments, False, []
@@ -468,7 +477,8 @@ class ContextManager:
             elif seg_type == "video":
                 parts.append("[视频]")
             elif seg_type == "forward":
-                parts.append("[转发消息]")
+                forward_text = await self._expand_forward(data, _depth)
+                parts.append(forward_text)
             elif seg_type == "json":
                 parts.append("[卡片消息]")
             elif seg_type == "file":
@@ -477,6 +487,82 @@ class ContextManager:
 
         content = "".join(parts).strip()
         return content, is_at_me, image_urls
+
+    async def _expand_forward(self, data: dict, depth: int) -> str:
+        """Expand a forward message into readable text.
+
+        Args:
+            data: The forward segment's data dict (contains 'id').
+            depth: Current recursion depth (0 = top level).
+
+        Returns:
+            Formatted string like:
+              (转发消息 共N条):
+                [02-19 14:30] 小明(123456): 你好
+                [02-19 14:31] 小红(789012): 嗯嗯
+                ...省略 M 条
+        """
+        if depth >= _FORWARD_MAX_DEPTH:
+            return "[嵌套转发消息]"
+
+        forward_id = data.get("id", "")
+        if not forward_id or not self.bot:
+            return "[转发消息]"
+
+        try:
+            nodes = await self.bot.get_forward_msg(forward_id)
+        except Exception as e:
+            logger.warning("Failed to fetch forward msg %s: %s", forward_id, e)
+            return "[转发消息]"
+
+        if not nodes:
+            return "[转发消息(空)]"
+
+        total = len(nodes)
+        indent = "  " * (depth + 1)
+        lines: list[str] = []
+        count = 0
+
+        for node in nodes:
+            if count >= _FORWARD_MAX_MESSAGES:
+                break
+
+            # Extract sender info
+            sender = node.get("sender", {})
+            sender_name = sender.get("nickname", sender.get("card", "?"))
+            sender_id = str(sender.get("user_id", "?"))
+            ts = self._format_short_timestamp(node.get("time", 0))
+
+            # Parse nested content (may contain further forwards)
+            node_content = node.get("content", node.get("message", []))
+            if isinstance(node_content, list):
+                text, _, _ = await self._parse_message_segments(node_content, _depth=depth + 1)
+            elif isinstance(node_content, str):
+                text = node_content
+            else:
+                text = str(node_content)
+
+            # Truncate long content (single-line: 50 chars, with nested forward: 500 chars)
+            max_len = 500 if "\n" in text else 50
+            if len(text) > max_len:
+                text = text[:max_len] + "..."
+
+            lines.append(f"{indent}[{ts}] {sender_name}({sender_id}): {text}")
+            count += 1
+
+        header = f"(转发消息 共{total}条):"
+        result = header + "\n" + "\n".join(lines)
+        if total > _FORWARD_MAX_MESSAGES:
+            result += f"\n{indent}...省略{total - _FORWARD_MAX_MESSAGES}条"
+        return result
+
+    @staticmethod
+    def _format_short_timestamp(unix_ts: int) -> str:
+        """Convert Unix timestamp to short MM-DD HH:MM format in CST."""
+        if unix_ts <= 0:
+            return "??-?? ??:??"
+        dt = datetime.fromtimestamp(unix_ts, tz=CST)
+        return dt.strftime("%m-%d %H:%M")
 
     @staticmethod
     def _format_timestamp(unix_ts: int) -> str:
