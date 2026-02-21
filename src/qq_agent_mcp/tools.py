@@ -1,10 +1,13 @@
 """MCP Tools definitions."""
 
 import asyncio
+import hashlib
 import logging
 import random
 import re
 import time
+import unicodedata
+from collections import deque
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
@@ -21,6 +24,50 @@ logger = logging.getLogger(__name__)
 _last_send: dict[str, float] = {}
 RATE_LIMIT_SECONDS = 3.0
 CST = timezone(timedelta(hours=8))
+
+# ── Duplicate send detection ────────────────────────────
+_DEDUP_WINDOW_SECONDS = 60.0  # 1 minute
+# key = "target_type:target_id" -> deque of (content_hash, send_time)
+_sent_history: dict[str, deque[tuple[str, float]]] = {}
+
+
+def _normalize_content(text: str) -> str:
+    """Normalize text for dedup comparison: strip, collapse whitespace, NFKC."""
+    text = unicodedata.normalize("NFKC", text.strip())
+    text = re.sub(r"\s+", " ", text)
+    return text.lower()
+
+
+def _check_duplicate(target_key: str, content: str) -> str | None:
+    """Check if content was sent to this target within the dedup window.
+
+    Returns a warning message if duplicate, None otherwise.
+    Automatically evicts expired entries.
+    """
+    now = time.time()
+    h = hashlib.md5(_normalize_content(content).encode()).hexdigest()
+
+    history = _sent_history.get(target_key)
+    if history is None:
+        history = deque(maxlen=50)
+        _sent_history[target_key] = history
+
+    # Evict expired entries
+    while history and now - history[0][1] > _DEDUP_WINDOW_SECONDS:
+        history.popleft()
+
+    # Check for match
+    for entry_hash, entry_time in history:
+        if entry_hash == h:
+            ago = int(now - entry_time)
+            return (
+                f"⚠️ 这条消息你在 {ago} 秒前已经发送过完全相同的内容，未重复发送。"
+                f"如果确实需要重发，请稍作修改后重试。"
+            )
+
+    # Record this send
+    history.append((h, now))
+    return None
 
 # Chunking config
 CHUNK_MAX_CHARS = 30
@@ -392,8 +439,14 @@ def register_tools(
             }
         _last_send[key] = now
 
+        # Duplicate detection (before chunking)
+        dup_warning = _check_duplicate(key, content)
+        if dup_warning:
+            return {"success": False, "error": dup_warning}
+
         # Split long messages into chunks (or send as one)
-        if split_content:
+        # Skip chunking for long messages (>100 chars) to avoid chat spam
+        if split_content and len(content.strip()) <= 100:
             chunks = _chunk_message(content)
         else:
             chunks = [content.strip()] if content.strip() else []

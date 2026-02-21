@@ -112,6 +112,13 @@ class OneBotClient:
         )
         return data.get("messages", []) if data else []
 
+    async def get_msg(self, message_id: str) -> dict:
+        """Fetch a single message by its ID.
+
+        Returns the full message event dict (sender, message, time, etc.).
+        """
+        return await self._call("get_msg", message_id=int(message_id))
+
     async def get_forward_msg(self, id: str) -> list[dict]:
         """Fetch forwarded message content by forward ID.
 

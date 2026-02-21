@@ -429,6 +429,67 @@ class ContextManager:
 
         logger.debug("Private %s | %s: %s", sender_id, sender_name, content[:50])
 
+    # ── Helpers ───────────────────────────────────────────
+
+    def _find_message_in_buffers(self, message_id: str) -> Message | None:
+        """Search all buffers for a message by its message_id (O(n) scan, zero I/O)."""
+        for buf in self._buffers.values():
+            for msg in reversed(buf.messages):  # recent first
+                if msg.message_id == message_id:
+                    return msg
+        return None
+
+    async def _resolve_reply(
+        self, reply_id: str, depth: int,
+    ) -> str:
+        """Resolve a reply segment into human-readable text.
+
+        Scheme C: buffer lookup first, then API fallback.
+        Format E: [回复了 名字(QQ号) 的「内容前50字」]
+        """
+        MAX_QUOTE_LEN = 50
+
+        # --- fast path: buffer lookup ---
+        cached = self._find_message_in_buffers(reply_id)
+        if cached:
+            quote = cached.content[:MAX_QUOTE_LEN]
+            if len(cached.content) > MAX_QUOTE_LEN:
+                quote += "…"
+            return f"[回复了 {cached.sender_name}({cached.sender_id}) 的「{quote}」] "
+
+        # --- slow path: API fallback ---
+        if not self.bot:
+            return "[回复了 未知消息] "
+
+        try:
+            event = await self.bot.get_msg(reply_id)
+        except Exception as e:
+            logger.warning("Failed to get_msg %s for reply expansion: %s", reply_id, e)
+            return "[回复了 未知消息] "
+
+        if not event:
+            return "[回复了 未知消息] "
+
+        # Parse sender
+        sender = event.get("sender", {})
+        sender_name = sender.get("card") or sender.get("nickname") or str(sender.get("user_id", "?"))
+        sender_id = str(event.get("user_id", sender.get("user_id", "?")))
+
+        # Parse content (non-recursive for reply — depth+1 to avoid infinite loops)
+        raw_msg = event.get("message", [])
+        if isinstance(raw_msg, str):
+            content_text = raw_msg
+        else:
+            # Strip reply segments from the referenced message to avoid nested reply expansion
+            filtered = [s for s in raw_msg if s.get("type") != "reply"]
+            content_text, _, _ = await self._parse_message_segments(filtered, _depth=depth + 1)
+
+        quote = content_text[:MAX_QUOTE_LEN]
+        if len(content_text) > MAX_QUOTE_LEN:
+            quote += "…"
+
+        return f"[回复了 {sender_name}({sender_id}) 的「{quote}」] "
+
     # ── Message Parsing ─────────────────────────────────────
 
     async def _parse_message_segments(
@@ -471,7 +532,11 @@ class ContextManager:
                 parts.append(f"[表情{face_id}]")
             elif seg_type == "reply":
                 reply_id = data.get("id", "")
-                parts.append(f"[回复 {reply_id}]")
+                if reply_id:
+                    reply_text = await self._resolve_reply(reply_id, _depth)
+                    parts.append(reply_text)
+                else:
+                    parts.append("[回复了 未知消息] ")
             elif seg_type == "record":
                 parts.append("[语音]")
             elif seg_type == "video":
