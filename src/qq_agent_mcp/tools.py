@@ -25,6 +25,24 @@ _last_send: dict[str, float] = {}
 RATE_LIMIT_SECONDS = 3.0
 CST = timezone(timedelta(hours=8))
 
+# ── @QQ号 → real at segment ──────────────────────────────
+_AT_RE = re.compile(r"(?<![a-zA-Z0-9.])@(\d{5,11})(?!\d)")
+
+
+def _text_to_segments(text: str) -> list[dict]:
+    """Convert @QQ号 in text to OneBot at segments, keeping the rest as text."""
+    segments: list[dict] = []
+    last_end = 0
+    for m in _AT_RE.finditer(text):
+        if m.start() > last_end:
+            segments.append({"type": "text", "data": {"text": text[last_end:m.start()]}})
+        segments.append({"type": "at", "data": {"qq": m.group(1)}})
+        last_end = m.end()
+    if last_end < len(text):
+        segments.append({"type": "text", "data": {"text": text[last_end:]}})
+    return segments or [{"type": "text", "data": {"text": text}}]
+
+
 # ── Duplicate send detection ────────────────────────────
 _DEDUP_WINDOW_SECONDS = 60.0  # 1 minute
 # key = "target_type:target_id" -> deque of (content_hash, send_time)
@@ -427,6 +445,13 @@ def register_tools(
         else:
             return {"success": False, "error": f"Invalid target_type: {target_type}"}
 
+        # Silence check — LLM should not call send_message for [沉默]
+        if content.strip().startswith("[沉默]"):
+            return {
+                "success": False,
+                "error": "你发送了沉默，沉默不该调用 MCP 接口。",
+            }
+
         # Rate limit
         now = time.time()
         key = f"{target_type}:{target}"
@@ -463,7 +488,7 @@ def register_tools(
                 chunk_text = chunk_text.rstrip("。.")
                 if not chunk_text:
                     continue
-                msg = [{"type": "text", "data": {"text": chunk_text}}]
+                msg = _text_to_segments(chunk_text)
                 rto = first_reply_to if i == 0 else None
 
                 if target_type == "group":
