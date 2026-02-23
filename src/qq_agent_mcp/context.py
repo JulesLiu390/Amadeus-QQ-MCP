@@ -545,7 +545,25 @@ class ContextManager:
                 forward_text = await self._expand_forward(data, _depth)
                 parts.append(forward_text)
             elif seg_type == "json":
-                parts.append("[卡片消息]")
+                raw = data.get("data", "")
+                try:
+                    card = json.loads(raw) if isinstance(raw, str) else raw
+                    prompt = (card.get("prompt") or "").strip()
+                    desc = (card.get("desc") or "").strip()
+                    if prompt and desc:
+                        label = f"{desc} - {prompt}"
+                    elif prompt:
+                        label = prompt
+                    else:
+                        label = None
+                    if label:
+                        if len(label) > 80:
+                            label = label[:80] + "…"
+                        parts.append(f"[卡片: {label}]")
+                    else:
+                        parts.append("[卡片消息]")
+                except (json.JSONDecodeError, TypeError, AttributeError):
+                    parts.append("[卡片消息]")
             elif seg_type == "file":
                 parts.append(f"[文件: {data.get('name', '?')}]")
             # Other types are silently dropped
