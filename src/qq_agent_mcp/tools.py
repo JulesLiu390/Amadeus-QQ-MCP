@@ -420,6 +420,7 @@ def register_tools(
         target_type: str = "group",
         reply_to: str | None = None,
         split_content: bool = True,
+        num_chunks: int | None = None,
     ) -> dict:
         """Send a message to a monitored group or whitelisted friend.
 
@@ -431,6 +432,11 @@ def register_tools(
             split_content: Whether to split long messages into multiple chunks
                 with typing delay (default True). Set to False to send as a
                 single message without splitting.
+            num_chunks: If set, split the message into exactly this many chunks
+                using natural punctuation boundaries. Overrides split_content.
+                The message is first split by punctuation, then the fine chunks
+                are merged into exactly num_chunks groups (e.g. num_chunks=3
+                sends exactly 3 messages with typing delays between them).
         """
         # Whitelist check
         if target_type == "group":
@@ -470,11 +476,24 @@ def register_tools(
             return {"success": False, "error": dup_warning}
 
         # Split long messages into chunks (or send as one)
-        # Skip chunking for long messages (>100 chars) to avoid chat spam
-        if split_content and len(content.strip()) <= 100:
+        stripped = content.strip()
+        if num_chunks is not None and num_chunks >= 2 and stripped:
+            # Split by punctuation first, then merge into exactly num_chunks groups
+            fine_chunks = _chunk_message(content)
+            if len(fine_chunks) <= num_chunks:
+                chunks = fine_chunks
+            else:
+                chunks = []
+                per_group = len(fine_chunks) / num_chunks
+                for i in range(num_chunks):
+                    start = round(i * per_group)
+                    end = round((i + 1) * per_group)
+                    chunks.append("\n".join(fine_chunks[start:end]))
+        elif split_content and len(stripped) <= 100:
+            # Auto split by punctuation (existing logic)
             chunks = _chunk_message(content)
         else:
-            chunks = [content.strip()] if content.strip() else []
+            chunks = [stripped] if stripped else []
         if not chunks:
             return {"success": False, "error": "Empty message content"}
 

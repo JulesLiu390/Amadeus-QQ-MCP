@@ -7,6 +7,7 @@ MCP Server，通过 NapCatQQ (OneBot v11) 让 AI 客户端收发 QQ 消息。支
 - **6 个 MCP 工具**：`check_status`、`get_group_list`、`get_recent_context`、`batch_get_recent_context`、`send_message`、`compress_context`
 - WebSocket 实时消息监听 + 自动重连
 - 消息按自然语义分段发送（句号/逗号/破折号等），模拟真人打字节奏
+- 支持 AI 自主控制消息拆分段数（`num_chunks` 参数，按标点拆分后合并为指定段数）
 - 群/好友白名单控制
 - 发送速率限制（3s/目标）
 
@@ -137,7 +138,7 @@ uv tool install /path/to/qq-mcp
 | `get_group_list` | 获取已加入的群列表 |
 | `get_recent_context(target, target_type?, limit?)` | 获取消息上下文（JSON 格式，含 is_self/is_at_me 标记） |
 | `batch_get_recent_context(targets, limit?)` | 批量查询多个群/好友的消息上下文（最多 2 次 API 调用） |
-| `send_message(target, content, target_type?, reply_to?)` | 发消息，自动分段+打字延迟 |
+| `send_message(target, content, target_type?, reply_to?, split_content?, num_chunks?)` | 发消息，自动分段+打字延迟。`num_chunks` 可指定恰好拆为几段（先按标点拆再合并） |
 | `compress_context(target, target_type?)` | 手动压缩历史消息为摘要 |
 
 ## 架构
