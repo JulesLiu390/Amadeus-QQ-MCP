@@ -37,9 +37,27 @@ sudo usermod -aG docker $USER   # 免 sudo 运行 docker
 
 **安装 NapCat：**
 
-本项目使用 [NapCatQQ](https://github.com/NapNeko/NapCatQQ) 的 Docker 镜像作为 QQ 协议端。项目的 `docker-compose.yml` 已配置好镜像，首次运行 `docker compose up -d` 时会自动拉取，无需手动安装。
+本项目使用 [NapCatQQ](https://github.com/NapNeko/NapCatQQ) 的 Docker 镜像作为 QQ 协议端。
 
-### 1. 启动 NapCat
+### 1. 配置 Docker Compose
+
+`docker-compose.yml` 已被 gitignore（包含账号信息），首次使用需从模板创建：
+
+```bash
+cp docker-compose.sample.yml docker-compose.yml
+```
+
+编辑 `docker-compose.yml`，按需修改：
+
+| 配置项 | 说明 |
+|--------|------|
+| `hostname` | QQ 显示的设备名称（如 `"Macbook Air 13"`） |
+| `ACCOUNT` | QQ 号，设置后容器重启时自动快速登录，无需再次扫码 |
+| `NAPCAT_UID` / `NAPCAT_GID` | 容器用户 UID/GID，macOS 默认 501:20，Ubuntu 建议 1000:1000 |
+
+> **关键**：设置 `ACCOUNT` 后，配合已有的 `restart: always` 和 QQ 登录态持久化（`./napcat/qq-data`），可实现掉线后自动重连、自动重新登录。仅当登录 token 过期时才需重新扫码。
+
+### 2. 启动 NapCat
 
 ```bash
 docker compose up -d
@@ -57,9 +75,7 @@ docker compose logs -f napcat
 > ```
 > macOS 默认值 (501:20) 无需设置。
 
-登录后建议在 `napcat/config/webui.json` 中设置 `"autoLoginAccount": "你的QQ号"`，避免重启后重新扫码。
-
-### 2. 安装依赖 & 启动 MCP Server
+### 3. 安装依赖 & 启动 MCP Server
 
 ```bash
 # 安装依赖
@@ -82,7 +98,7 @@ uv run qq-agent-mcp --qq 你的QQ号 \
   --log-level info
 ```
 
-### 3. 配置 MCP 客户端
+### 4. 配置 MCP 客户端
 
 在 AI 客户端（PetGPT、Claude Desktop 等）中添加：
 
@@ -159,7 +175,7 @@ qq-agent-mcp (Python)
 qq-mcp/
 ├── src/qq_agent_mcp/    # MCP Server 源码
 ├── napcat/              # NapCat Docker 挂载目录（见 napcat/README.md）
-├── docker-compose.yml   # NapCat 容器配置
+├── docker-compose.sample.yml  # Docker Compose 模板（docker-compose.yml 被 gitignore）
 ├── pyproject.toml       # Python 项目配置
 └── test_mcp.py          # 集成测试
 ```

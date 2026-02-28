@@ -20,6 +20,9 @@ napcat/qq-data/*
 !napcat/qq-data/.gitkeep
 !napcat/README.md
 
+# Docker Compose (contains account-specific config)
+docker-compose.yml
+
 # IDE
 .idea/
 .vscode/
