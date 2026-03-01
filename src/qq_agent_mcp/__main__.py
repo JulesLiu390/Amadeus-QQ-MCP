@@ -39,7 +39,7 @@ def parse_args() -> Config:
     parser.add_argument(
         "--friends",
         default=None,
-        help="Comma-separated friend QQ IDs to monitor private chats (default: none)",
+        help="Comma-separated friend QQ IDs to monitor private chats (default: all)",
     )
     parser.add_argument(
         "--buffer-size",
@@ -66,7 +66,7 @@ def parse_args() -> Config:
     if args.groups:
         groups = set(args.groups.split(","))
 
-    friends: set[str] = set()
+    friends: set[str] | None = None
     if args.friends:
         friends = set(args.friends.split(","))
 

@@ -10,7 +10,7 @@ class Config:
     napcat_port: int = 3000
     ws_port: int = 3001
     groups: set[str] | None = None  # None = monitor all groups
-    friends: set[str] = field(default_factory=set)  # empty = no private chat
+    friends: set[str] | None = None  # None = monitor all private chats
     buffer_size: int = 100
     compress_every: int = 30
     log_level: str = "info"
@@ -30,5 +30,7 @@ class Config:
         return group_id in self.groups
 
     def is_friend_monitored(self, user_id: str) -> bool:
-        """Check if a friend is in the whitelist."""
+        """Check if a friend is in the whitelist. None means all."""
+        if self.friends is None:
+            return True
         return user_id in self.friends

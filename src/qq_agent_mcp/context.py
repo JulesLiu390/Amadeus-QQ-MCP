@@ -221,7 +221,48 @@ class ContextManager:
             except Exception as e:
                 logger.warning("Failed to backfill group %s: %s", gid, e)
 
-        logger.info("History backfill complete: %d messages across %d groups", count, len(self._buffers))
+        logger.info("History backfill complete: %d messages across groups", count)
+
+        # ── Backfill private chat history for friends ──
+        try:
+            all_friends = await bot.get_friend_list()
+        except Exception as e:
+            logger.warning("Failed to get friend list for backfill: %s", e)
+            return
+
+        friend_count = 0
+        for f in all_friends:
+            uid = str(f.get("user_id", ""))
+            if not uid or not self.config.is_friend_monitored(uid):
+                continue
+            try:
+                messages = await bot.get_friend_msg_history(uid, count=self.config.buffer_size)
+                key = self._buffer_key("private", uid)
+                buf = self._get_or_create_buffer(key)
+                for event in messages:
+                    sender_id = str(event.get("user_id", event.get("sender", {}).get("user_id", "")))
+                    is_self = sender_id == self.config.qq
+                    content, _, image_urls = await self._parse_message_segments(event.get("message", []))
+                    if not content.strip():
+                        continue
+                    sender_name = event.get("sender", {}).get("nickname", sender_id)
+                    msg = Message(
+                        sender_id=sender_id,
+                        sender_name=sender_name,
+                        content=content,
+                        timestamp=self._format_timestamp(event.get("time", 0)),
+                        message_id=str(event.get("message_id", "")),
+                        is_self=is_self,
+                        image_urls=image_urls,
+                    )
+                    buf.messages.append(msg)
+                    friend_count += 1
+                logger.info("Backfilled %d messages for friend %s", len(buf.messages), uid)
+            except Exception as e:
+                logger.warning("Failed to backfill friend %s: %s", uid, e)
+
+        logger.info("Friend history backfill complete: %d messages across friends",
+                    friend_count)
 
     async def stop(self) -> None:
         """Stop the WebSocket listener."""
@@ -399,7 +440,7 @@ class ContextManager:
         """Process a private message event."""
         sender_id = str(event.get("user_id", event.get("sender", {}).get("user_id", "")))
 
-        # Whitelist check — friends list must be explicitly set
+        # Accept all private messages when friends=None, or check whitelist
         if not self.config.is_friend_monitored(sender_id):
             return
 

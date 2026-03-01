@@ -112,6 +112,18 @@ class OneBotClient:
         )
         return data.get("messages", []) if data else []
 
+    async def get_friend_msg_history(
+        self, user_id: str, count: int = 20
+    ) -> list[dict]:
+        """Fetch recent private message history (NapCat extension API).
+
+        Returns list of message events, same format as get_group_msg_history.
+        """
+        data = await self._call(
+            "get_friend_msg_history", user_id=int(user_id), count=count
+        )
+        return data.get("messages", []) if data else []
+
     async def get_msg(self, message_id: str) -> dict:
         """Fetch a single message by its ID.
 

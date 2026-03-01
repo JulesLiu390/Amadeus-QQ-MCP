@@ -232,9 +232,16 @@ def register_tools(
 
         # Resolve friend nicknames
         monitored_friends = []
-        if config.friends:
-            try:
-                all_friends = await bot.get_friend_list()
+        try:
+            all_friends = await bot.get_friend_list()
+            if config.friends is None:
+                # Monitor all friends
+                monitored_friends = [
+                    {"user_id": str(f.get("user_id", "")),
+                     "nickname": f.get("nickname", f.get("remark", ""))}
+                    for f in all_friends
+                ]
+            else:
                 friend_map = {str(f.get("user_id", "")): f for f in all_friends}
                 for uid in config.friends:
                     f = friend_map.get(uid, {})
@@ -242,7 +249,8 @@ def register_tools(
                         "user_id": uid,
                         "nickname": f.get("nickname", f.get("remark", "")),
                     })
-            except Exception:
+        except Exception:
+            if config.friends is not None:
                 monitored_friends = [{"user_id": uid, "nickname": ""} for uid in config.friends]
 
         return {
