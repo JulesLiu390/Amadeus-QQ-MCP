@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "qq-agent": {
+      "command": "/home/jules/.local/bin/uv",
+      "args": "run --directory /home/jules/Documents/Projects/Amadeus-QQ-MCP qq-agent-mcp --qq 35694438042"
+    }
+  }
+}

@@ -1,4 +1,4 @@
-# Amadeus-QQ-MCP
+uv run python scripts/test-mcp-linux.py# Amadeus-QQ-MCP
 
 MCP Server，通过 NapCatQQ (OneBot v11) 让 AI 客户端收发 QQ 消息。支持群聊和私聊。
 
@@ -13,75 +13,67 @@ MCP Server，通过 NapCatQQ (OneBot v11) 让 AI 客户端收发 QQ 消息。支
 
 ## 前置条件
 
+- Linux（Ubuntu 推荐）
 - Docker
 - Python 3.11+
 - [uv](https://github.com/astral-sh/uv)
 
+> 以上依赖可通过 `scripts/install-linux.sh` 一键安装。
+
 ---
 
-## 运行
+## 快速开始（Linux）
 
-### 0. 安装 Docker 和 NapCat
-
-**安装 Docker：**
+### 1. 安装依赖
 
 ```bash
-# macOS — 安装 Docker Desktop
-brew install --cask docker
-
-# Ubuntu
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER   # 免 sudo 运行 docker
-# 重新登录终端生效
+scripts/install-linux.sh
 ```
 
-**安装 NapCat：**
+自动安装 Docker、uv，初始化项目配置并安装 Python 依赖。安装完成后需要 `source ~/.bashrc` 或打开新终端让 `uv` 命令生效。
 
-本项目使用 [NapCatQQ](https://github.com/NapNeko/NapCatQQ) 的 Docker 镜像作为 QQ 协议端。
-
-### 1. 配置 Docker Compose
-
-`docker-compose.yml` 已被 gitignore（包含账号信息），首次使用需从模板创建：
+### 2. 配置 NapCat
 
 ```bash
-cp docker-compose.sample.yml docker-compose.yml
+scripts/setup-linux.sh
 ```
 
-编辑 `docker-compose.yml`，按需修改：
+交互式引导你完成：
+- 拉取 NapCat Docker 镜像
+- 输入 QQ 号、设备名称、UID/GID
+- 生成 `docker-compose.yml`
+- 生成 OneBot11 接口配置（HTTP API 端口 3000 + WebSocket 端口 3001）
 
-| 配置项 | 说明 |
-|--------|------|
-| `hostname` | QQ 显示的设备名称（如 `"Macbook Air 13"`） |
-| `ACCOUNT` | QQ 号，设置后容器重启时自动快速登录，无需再次扫码 |
-| `NAPCAT_UID` / `NAPCAT_GID` | 容器用户 UID/GID，macOS 默认 501:20，Ubuntu 建议 1000:1000 |
-
-> **关键**：设置 `ACCOUNT` 后，配合已有的 `restart: always` 和 QQ 登录态持久化（`./napcat/qq-data`），可实现掉线后自动重连、自动重新登录。仅当登录 token 过期时才需重新扫码。
-
-### 2. 启动 NapCat
+### 3. 启动 NapCat
 
 ```bash
-docker compose up -d
+scripts/start-docker-linux.sh
 ```
 
 首次启动需扫码登录，查看二维码：
 
 ```bash
-docker compose logs -f napcat
+sudo docker compose logs -f napcat
 ```
 
-> **Ubuntu 服务器**：需设置 UID/GID 匹配宿主用户
-> ```bash
-> NAPCAT_UID=1000 NAPCAT_GID=1000 docker compose up -d
-> ```
-> macOS 默认值 (501:20) 无需设置。
+> 设置 `ACCOUNT` 后，配合 `restart: always` 和登录态持久化（`./napcat/qq-data`），可实现掉线后自动重连。仅当登录 token 过期时才需重新扫码。
 
-### 3. 安装依赖 & 启动 MCP Server
+### 4. 测试连接
 
 ```bash
-# 安装依赖
-uv sync
+uv run python scripts/test-mcp-linux.py
+```
 
-# 启动（最小参数）
+自动从 `docker-compose.yml` 读取 QQ 号，依次测试：MCP 握手 → 工具列表 → check_status。也可手动指定：
+
+```bash
+uv run python scripts/test-mcp-linux.py --qq 你的QQ号
+```
+
+### 5. 启动 MCP Server
+
+```bash
+# 最小参数
 uv run qq-agent-mcp --qq 你的QQ号
 
 # 指定监听群和好友
@@ -98,38 +90,24 @@ uv run qq-agent-mcp --qq 你的QQ号 \
   --log-level info
 ```
 
-### 4. 配置 MCP 客户端
+### 6. 配置 MCP 客户端
 
-在 AI 客户端（PetGPT、Claude Desktop 等）中添加：
-
-```json
-{
-  "name": "QQ Agent",
-  "transport": "stdio",
-  "command": "uv",
-  "args": [
-    "run", "--directory", "/path/to/qq-mcp",
-    "qq-agent-mcp",
-    "--qq", "你的QQ号",
-    "--groups", "群号1,群号2"
-  ]
-}
-```
-
-或全局安装后直接用：
-
-```bash
-uv tool install /path/to/qq-mcp
-```
+`scripts/setup-linux.sh` 已自动在项目根目录生成 `mcp.json`，默认监听所有群：
 
 ```json
 {
-  "name": "QQ Agent",
-  "transport": "stdio",
-  "command": "qq-agent-mcp",
-  "args": ["--qq", "你的QQ号", "--groups", "群号1,群号2"]
+  "mcpServers": {
+    "qq-agent": {
+      "command": "/home/你的用户名/.local/bin/uv",
+      "args": "run --directory /path/to/Amadeus-QQ-MCP qq-agent-mcp --qq 你的QQ号"
+    }
+  }
 }
 ```
+
+将 `mcp.json` 的内容复制到你的 AI 客户端的 MCP 配置中即可。
+
+如需指定监听的群，在 `args` 中添加 `"--groups"`, `"群号1,群号2"`。
 
 ---
 
@@ -172,15 +150,23 @@ qq-agent-mcp (Python)
 ## 目录结构
 
 ```
-qq-mcp/
-├── src/qq_agent_mcp/    # MCP Server 源码
-├── napcat/              # NapCat Docker 挂载目录（见 napcat/README.md）
-├── docker-compose.sample.yml  # Docker Compose 模板（docker-compose.yml 被 gitignore）
-├── pyproject.toml       # Python 项目配置
-└── test_mcp.py          # 集成测试
+Amadeus-QQ-MCP/
+├── src/qq_agent_mcp/           # MCP Server 源码
+├── scripts/                    # 辅助脚本
+│   ├── install-linux.sh        # 一键安装 (Linux)
+│   ├── setup-linux.sh          # NapCat 配置 (Linux)
+│   ├── start-docker-linux.sh   # 启动 Docker (Linux)
+│   └── test-mcp-linux.py       # MCP 连接测试 (Linux)
+├── napcat/                     # NapCat Docker 挂载目录
+│   ├── config/                 # NapCat + OneBot 配置
+│   └── qq-data/                # QQ 登录态持久化
+├── tests/                      # 集成测试
+├── docker-compose.sample.yml   # Docker Compose 模板
+├── mcp.json                    # MCP 客户端配置（setup 自动生成）
+├── pyproject.toml              # Python 项目配置
+└── README.md
 ```
 
 ## License
 
 MIT
-# Amadeus-QQ-MCP

@@ -2,12 +2,12 @@ services:
   napcat:
     image: mlikiowa/napcat-docker:latest
     container_name: napcat
-    hostname: "Macbook Air 13"
+    hostname: "thinkpad"
     restart: always
     environment:
-      - ACCOUNT=3825478002
-      - NAPCAT_UID=${NAPCAT_UID:-501}
-      - NAPCAT_GID=${NAPCAT_GID:-20}
+      - ACCOUNT=35694438042
+      - NAPCAT_UID=${NAPCAT_UID:-1000}
+      - NAPCAT_GID=${NAPCAT_GID:-1000}
     ports:
       - "3000:3000"   # OneBot HTTP API
       - "3001:3001"   # OneBot WebSocket
