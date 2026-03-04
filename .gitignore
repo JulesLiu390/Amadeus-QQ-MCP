@@ -23,9 +23,15 @@ napcat/qq-data/*
 # Docker Compose (contains account-specific config)
 docker-compose.yml
 
+# MCP client config (contains account-specific paths)
+mcp.json
+
 # IDE
 .idea/
 .vscode/
+
+# Claude Code
+.claude/
 
 # SQLite databases (dev artifacts)
 *.db

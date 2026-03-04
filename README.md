@@ -13,12 +13,68 @@ MCP Server，通过 NapCatQQ (OneBot v11) 让 AI 客户端收发 QQ 消息。支
 
 ## 前置条件
 
-- Linux（Ubuntu 推荐）
 - Docker
 - Python 3.11+
 - [uv](https://github.com/astral-sh/uv)
 
-> 以上依赖可通过 `scripts/install-linux.sh` 一键安装。
+> **Linux**: 以上依赖可通过 `scripts/install-linux.sh` 一键安装。
+>
+> **Windows**: 需手动安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/)，uv 可通过 `irm https://astral.sh/uv/install.ps1 | iex` 安装。
+
+---
+
+## 快速开始（Windows）
+
+### 1. 配置 NapCat
+
+```powershell
+.\scripts\setup-windows.ps1
+```
+
+交互式引导你完成：
+- 检查并自动启动 Docker Desktop
+- 拉取 NapCat Docker 镜像
+- 输入 QQ 号、设备名称
+- 生成 `docker-compose.yml`
+- 生成 OneBot11 接口配置（HTTP API 端口 3000 + WebSocket 端口 3001）
+- 生成 `mcp.json`
+
+### 2. 启动 NapCat
+
+```powershell
+.\scripts\start-docker-windows.ps1
+```
+
+首次启动需扫码登录，查看二维码：
+
+```powershell
+docker compose logs -f napcat
+```
+
+或访问 WebUI：http://localhost:6099
+
+### 3. 启动 MCP Server
+
+```powershell
+uv run qq-agent-mcp --qq 你的QQ号
+```
+
+### 4. 配置 MCP 客户端
+
+`setup-windows.ps1` 已自动生成 `mcp.json`：
+
+```json
+{
+  "mcpServers": {
+    "qq-agent": {
+      "command": "C:/Users/你的用户名/.local/bin/uv.exe",
+      "args": "run --directory C:/path/to/Amadeus-QQ-MCP qq-agent-mcp --qq 你的QQ号"
+    }
+  }
+}
+```
+
+将 `mcp.json` 的内容复制到你的 AI 客户端的 MCP 配置中即可。
 
 ---
 
@@ -156,7 +212,9 @@ Amadeus-QQ-MCP/
 │   ├── install-linux.sh        # 一键安装 (Linux)
 │   ├── setup-linux.sh          # NapCat 配置 (Linux)
 │   ├── start-docker-linux.sh   # 启动 Docker (Linux)
-│   └── test-mcp-linux.py       # MCP 连接测试 (Linux)
+│   ├── test-mcp-linux.py       # MCP 连接测试 (Linux)
+│   ├── setup-windows.ps1       # NapCat 配置 (Windows)
+│   └── start-docker-windows.ps1 # 启动 Docker (Windows)
 ├── napcat/                     # NapCat Docker 挂载目录
 │   ├── config/                 # NapCat + OneBot 配置
 │   └── qq-data/                # QQ 登录态持久化
