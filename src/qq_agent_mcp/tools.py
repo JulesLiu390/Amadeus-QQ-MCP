@@ -576,6 +576,78 @@ def register_tools(
         }
 
     @mcp.tool()
+    async def send_image(
+        target: str,
+        image: str,
+        target_type: str = "group",
+        reply_to: str | None = None,
+    ) -> dict:
+        """Send an image to a monitored group or whitelisted friend.
+
+        Args:
+            target: Group ID or friend QQ ID.
+            image: Base64-encoded image data (without the base64:// prefix).
+            target_type: "group" (default) or "private".
+            reply_to: Optional message ID to reply to.
+        """
+        # Whitelist check
+        if target_type == "group":
+            if not config.is_group_monitored(target):
+                return {"success": False, "error": f"Group {target} is not monitored"}
+        elif target_type == "private":
+            if not config.is_friend_monitored(target):
+                return {
+                    "success": False,
+                    "error": f"User {target} is not in friends whitelist",
+                }
+        else:
+            return {"success": False, "error": f"Invalid target_type: {target_type}"}
+
+        # Rate limit
+        now = time.time()
+        key = f"{target_type}:{target}"
+        last = _last_send.get(key, 0)
+        if now - last < RATE_LIMIT_SECONDS:
+            wait = RATE_LIMIT_SECONDS - (now - last)
+            return {
+                "success": False,
+                "error": f"Rate limited. Try again in {wait:.1f}s",
+            }
+        _last_send[key] = now
+
+        msg = [{"type": "image", "data": {"file": f"base64://{image}"}}]
+
+        try:
+            if target_type == "group":
+                result = await bot.send_group_msg(target, msg, reply_to=reply_to)
+            else:
+                result = await bot.send_private_msg(target, msg, reply_to=reply_to)
+        except Exception as e:
+            _last_send[key] = last  # rollback rate limit on failure
+            return {"success": False, "error": str(e)}
+
+        msg_id = str(result.get("message_id", ""))
+
+        # Write bot's own message into buffer
+        bot_msg = Message(
+            sender_id=config.qq,
+            sender_name="bot",
+            content="[图片]",
+            timestamp=datetime.now(CST).isoformat(),
+            message_id=msg_id,
+            is_self=True,
+        )
+        ctx.add_message(target, target_type, bot_msg)
+
+        return {
+            "success": True,
+            "message_id": msg_id,
+            "target": target,
+            "target_type": target_type,
+            "timestamp": datetime.now(CST).isoformat(),
+        }
+
+    @mcp.tool()
     async def compress_context(
         target: str,
         ctx_mcp: Context,
