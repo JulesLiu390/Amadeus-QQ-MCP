@@ -282,6 +282,20 @@ def register_tools(
         }
 
     @mcp.tool()
+    async def get_friend_list() -> dict:
+        """Get the list of QQ friends."""
+        friends = await bot.get_friend_list()
+        return {
+            "friends": [
+                {
+                    "user_id": str(f.get("user_id", "")),
+                    "nickname": f.get("nickname", f.get("remark", "")),
+                }
+                for f in friends
+            ]
+        }
+
+    @mcp.tool()
     async def get_recent_context(
         target: str,
         target_type: str = "group",
@@ -427,7 +441,7 @@ def register_tools(
         content: str,
         target_type: str = "group",
         reply_to: str | None = None,
-        split_content: bool = True,
+        split_content: bool = False,
         num_chunks: int | None = None,
     ) -> dict:
         """Send a message to a monitored group or whitelisted friend.
@@ -438,8 +452,8 @@ def register_tools(
             target_type: "group" (default) or "private".
             reply_to: Optional message ID to reply to.
             split_content: Whether to split long messages into multiple chunks
-                with typing delay (default True). Set to False to send as a
-                single message without splitting.
+                with typing delay (default False). Set to True to enable
+                automatic splitting by punctuation for short messages.
             num_chunks: If set, split the message into exactly this many chunks
                 using natural punctuation boundaries. Overrides split_content.
                 The message is first split by punctuation, then the fine chunks
@@ -485,7 +499,10 @@ def register_tools(
 
         # Split long messages into chunks (or send as one)
         stripped = content.strip()
-        if num_chunks is not None and num_chunks >= 2 and stripped:
+        if num_chunks is not None and num_chunks == 1:
+            # Caller explicitly requested a single message — no splitting
+            chunks = [stripped] if stripped else []
+        elif num_chunks is not None and num_chunks >= 2 and stripped:
             # Split by punctuation first, then merge into exactly num_chunks groups
             fine_chunks = _chunk_message(content)
             if len(fine_chunks) <= num_chunks:
