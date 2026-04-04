@@ -22,21 +22,32 @@ logger = logging.getLogger(__name__)
 
 # Rate limiter state: target -> last_send_timestamp
 _last_send: dict[str, float] = {}
-RATE_LIMIT_SECONDS = 3.0
+RATE_LIMIT_SECONDS = 0.0
 CST = timezone(timedelta(hours=8))
 
 # ── @QQ号 → real at segment ──────────────────────────────
 _AT_RE = re.compile(r"(?<![a-zA-Z0-9.])@(\d{5,11})(?!\d)")
+# ── CQ码表情 → real face segment ────────────────────────
+_CQ_FACE_RE = re.compile(r"\[CQ:face,id=(\d+)\]")
+
+# Combined pattern: match either @QQ号 or [CQ:face,id=N]
+_SEGMENT_RE = re.compile(
+    r"(?P<at>(?<![a-zA-Z0-9.])@(?P<qq>\d{5,11})(?!\d))"
+    r"|(?P<face>\[CQ:face,id=(?P<face_id>\d+)\])"
+)
 
 
 def _text_to_segments(text: str) -> list[dict]:
-    """Convert @QQ号 in text to OneBot at segments, keeping the rest as text."""
+    """Convert @QQ号 and [CQ:face,id=N] in text to OneBot segments."""
     segments: list[dict] = []
     last_end = 0
-    for m in _AT_RE.finditer(text):
+    for m in _SEGMENT_RE.finditer(text):
         if m.start() > last_end:
             segments.append({"type": "text", "data": {"text": text[last_end:m.start()]}})
-        segments.append({"type": "at", "data": {"qq": m.group(1)}})
+        if m.group("at"):
+            segments.append({"type": "at", "data": {"qq": m.group("qq")}})
+        elif m.group("face"):
+            segments.append({"type": "face", "data": {"id": m.group("face_id")}})
         last_end = m.end()
     if last_end < len(text):
         segments.append({"type": "text", "data": {"text": text[last_end:]}})
@@ -124,6 +135,13 @@ def _chunk_message(text: str, max_chars: int = CHUNK_MAX_CHARS) -> list[str]:
     if not text:
         return []
 
+    # Protect URLs from being split on punctuation (.:?! etc.)
+    _URL_PLACEHOLDER = "\x01"
+    _url_re = re.compile(r'https?://\S+')
+    _urls_found = _url_re.findall(text)
+    for _i, _u in enumerate(_urls_found):
+        text = text.replace(_u, f"{_URL_PLACEHOLDER}{_i}{_URL_PLACEHOLDER}", 1)
+
     # Protect file extensions from being split on the dot (case-insensitive)
     _PLACEHOLDER = "\x00"
     _ext_re = re.compile(r'\.(?:md|jpeg|jpg|png|py|js|ts|json|html|css|txt|csv|pdf|zip|gif|svg|mp3|mp4|wav)\b', re.IGNORECASE)
@@ -181,12 +199,16 @@ def _chunk_message(text: str, max_chars: int = CHUNK_MAX_CHARS) -> list[str]:
                 grouped2 = _group_parts(clauses, max_chars)
                 chunks.extend(grouped2)
 
-    # Restore protected file extensions
-    return [c.replace(_PLACEHOLDER, ".") for c in chunks if c]
+    # Restore protected file extensions and URLs
+    result = [c.replace(_PLACEHOLDER, ".") for c in chunks if c]
+    for _i, _u in enumerate(_urls_found):
+        result = [c.replace(f"{_URL_PLACEHOLDER}{_i}{_URL_PLACEHOLDER}", _u) for c in result]
+    return result
 
 
 def register_tools(
-    mcp: Any, config: Config, bot: OneBotClient, ctx: ContextManager
+    mcp: Any, config: Config, bot: OneBotClient, ctx: ContextManager,
+    browser_holder: dict | None = None,
 ) -> None:
     """Register all MCP tools on the FastMCP server instance."""
 
@@ -554,10 +576,6 @@ def register_tools(
                 )
                 ctx.add_message(target, target_type, bot_msg)
 
-                # Human-like delay based on chunk length (not after last)
-                if i < len(chunks) - 1:
-                    delay = _human_delay_for_chunk(chunk_text)
-                    await asyncio.sleep(delay)
 
         except Exception as e:
             _last_send[key] = last  # rollback rate limit on failure
@@ -568,9 +586,6 @@ def register_tools(
                     "message_ids": sent_ids,
                 }
             return {"success": False, "error": str(e)}
-
-        # Brief wait for WebSocket to deliver group reactions
-        await asyncio.sleep(0.5)
 
         # Snapshot: all messages since this send_message started (incremental)
         recent_msgs = ctx.get_messages_since(target, target_type, t0)
@@ -723,6 +738,141 @@ def register_tools(
             "compressed": len(all_msgs),
             "method": method,
             "compressed_summary": buf.compressed_summary,
+        }
+
+    @mcp.tool()
+    async def screenshot_chat(
+        target: str,
+        message_id: str,
+        target_type: str = "group",
+    ) -> dict:
+        """Take a QQ-style screenshot of chat messages starting from a specific message.
+
+        Renders messages as a dark-mode QQ chat screenshot (iPhone style) and
+        returns a base64-encoded PNG image.
+
+        The screenshot starts from the given message_id and renders downward.
+        If the messages fit on one screen, earlier messages are prepended to
+        fill the screen (bottom-aligned). If they overflow, later messages
+        are cut off at the bottom.
+
+        Args:
+            target: Group ID or friend QQ ID.
+            message_id: The message ID to start rendering from.
+            target_type: "group" (default) or "private".
+        """
+        from .renderer import render_to_base64, measure_chat_height
+
+        if target_type == "group":
+            if not config.is_group_monitored(target):
+                return {"success": False, "error": f"Group {target} is not monitored"}
+        elif target_type == "private":
+            if not config.is_friend_monitored(target):
+                return {"success": False, "error": f"User {target} is not in friends whitelist"}
+        else:
+            return {"success": False, "error": f"Invalid target_type: {target_type}"}
+
+        # Get browser (lazy-start Playwright)
+        if browser_holder is None:
+            return {"success": False, "error": "Screenshot not available (no browser)"}
+
+        if browser_holder["browser"] is None:
+            from playwright.async_api import async_playwright
+            pw = await async_playwright().start()
+            browser_holder["pw"] = pw
+            browser_holder["browser"] = await pw.chromium.launch()
+            logger.info("Playwright browser started")
+
+        browser = browser_holder["browser"]
+
+        # Find message_id in buffer and split into before/after
+        buf_key = ctx._buffer_key(target_type, target)
+        buf = ctx._buffers.get(buf_key)
+        if buf is None:
+            return {"success": False, "error": f"No messages buffered for {target}"}
+
+        all_msgs = list(buf.messages)
+        # Find the index of message_id
+        start_idx = None
+        for i, m in enumerate(all_msgs):
+            if m.message_id == message_id:
+                start_idx = i
+                break
+
+        if start_idx is None:
+            return {"success": False, "error": f"Message {message_id} not found in buffer"}
+
+        after_msgs = all_msgs[start_idx:]  # message_id and everything after
+        before_msgs = all_msgs[:start_idx]  # everything before message_id
+
+        # Get group info
+        group_name = target
+        member_count = 0
+        if target_type == "group":
+            try:
+                info = await bot.get_group_info(target)
+                group_name = info.get("group_name", target)
+                member_count = info.get("member_count", 0)
+            except Exception:
+                pass
+
+        # Get member info (title/level/role) for all senders
+        sender_ids = set(m.sender_id for m in all_msgs)
+        member_info: dict[str, dict] = {}
+        for uid in sender_ids:
+            try:
+                mi = await bot._call("get_group_member_info",
+                                     group_id=int(target), user_id=int(uid))
+                if mi:
+                    member_info[uid] = mi
+            except Exception:
+                pass
+
+        def _msg_to_dict(m: Message) -> dict:
+            mi = member_info.get(m.sender_id, {})
+            return {
+                "sender_id": m.sender_id,
+                "sender_name": m.sender_name,
+                "content": m.content,
+                "timestamp": m.timestamp,
+                "message_id": m.message_id,
+                "is_at_me": m.is_at_me,
+                "is_self": m.is_self,
+                "image_urls": m.image_urls,
+                "_title": mi.get("title", ""),
+                "_role": mi.get("role", "member"),
+                "_level": mi.get("level", ""),
+            }
+
+        after_dicts = [_msg_to_dict(m) for m in after_msgs]
+
+        # Measure if after_msgs fit on screen
+        chat_scroll, chat_client = await measure_chat_height(
+            browser, after_dicts, group_name, member_count,
+        )
+
+        if chat_scroll <= chat_client:
+            # Fits — prepend earlier messages to fill the screen
+            combined = [_msg_to_dict(m) for m in before_msgs] + after_dicts
+            # Keep adding earlier msgs until it overflows, then use bottom_align
+            b64 = await render_to_base64(
+                browser, combined, group_name, member_count,
+                bottom_align=True,
+            )
+        else:
+            # Overflow — render from message_id, top-aligned
+            b64 = await render_to_base64(
+                browser, after_dicts, group_name, member_count,
+                bottom_align=False,
+            )
+
+        return {
+            "success": True,
+            "image": b64,
+            "message_count": len(after_dicts),
+            "target": target,
+            "target_type": target_type,
+            "start_message_id": message_id,
         }
 
 

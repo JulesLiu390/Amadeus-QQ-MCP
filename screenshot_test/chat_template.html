@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+    background: #111111;
+    width: 480px;
+    height: 1040px;
+    padding: 0;
+    color: #e0e0e0;
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Status bar ── */
+  .status-bar {
+    background: #1a1a1a;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 24px 6px;
+    font-size: 17px;
+    font-weight: 600;
+    color: #e0e0e0;
+    flex-shrink: 0;
+  }
+  .status-bar .time { font-weight: 700; }
+  .status-icons { display: flex; align-items: center; gap: 5px; }
+  .status-icons svg { fill: #e0e0e0; }
+
+  /* ── Header ── */
+  .header {
+    background: #1a1a1a;
+    display: flex;
+    align-items: center;
+    padding: 8px 16px 12px;
+    border-bottom: 1px solid #2a2a2a;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+  .header .back { color: #e0e0e0; font-size: 20px; margin-right: 6px; font-weight: 300; display: flex; align-items: center; }
+  .header .back svg { stroke: #e0e0e0; fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+  .header .unread-badge {
+    background: #666; color: #fff; font-size: 14px;
+    width: 24px; height: 24px; border-radius: 50%; margin-right: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .header .title {
+    font-size: 21px; font-weight: 500; color: #e0e0e0;
+    flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .header .member-count { color: #e0e0e0; font-size: 21px; flex-shrink: 0; white-space: nowrap; }
+  .header .menu { margin-left: 10px; display: flex; align-items: center; }
+  .header .menu svg { stroke: #e0e0e0; stroke-width: 2.5; stroke-linecap: round; }
+
+  /* ── Chat area ── */
+  .chat {
+    padding: 8px 14px 0;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Time separator ── */
+  .time-sep { text-align: center; padding: 10px 0 6px; }
+  .time-sep span { color: #666; font-size: 11px; }
+
+  /* ── Message row ── */
+  .msg-row {
+    display: flex;
+    align-items: flex-start;
+    margin-bottom: 14px;
+    max-width: 100%;
+  }
+  .msg-row.self { flex-direction: row-reverse; }
+
+  /* Consecutive: less margin, hide avatar+name */
+  .msg-row.consecutive { margin-bottom: 4px; }
+  .msg-row.consecutive .avatar { visibility: hidden; }
+  .msg-row.consecutive .msg-name-row { display: none; }
+
+  /* Avatar */
+  .avatar {
+    width: 42px; height: 42px; border-radius: 50%;
+    flex-shrink: 0; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .avatar .fallback { font-size: 18px; font-weight: 600; color: #fff; }
+
+  /* Message body */
+  .msg-body { margin: 0 10px; max-width: 340px; min-width: 0; }
+
+  /* Name row */
+  .msg-name-row {
+    display: flex; align-items: center;
+    margin-bottom: 6px; gap: 6px;
+  }
+  .self .msg-name-row { flex-direction: row-reverse; }
+  .name-badge {
+    font-size: 10px; padding: 1px 5px; border-radius: 3px;
+    color: #fff; font-weight: 500; white-space: nowrap;
+  }
+  .level-badge {
+    font-size: 9px; padding: 1px 4px; border-radius: 3px;
+    color: #fff; font-weight: 500; white-space: nowrap;
+  }
+  .msg-name {
+    font-size: 12px; color: #888;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* Bubble */
+  .bubble {
+    display: inline-block;
+    padding: 10px 14px;
+    border-radius: 14px;
+    font-size: 20px;
+    line-height: 1.6;
+    overflow-wrap: break-word;
+    word-break: break-all;
+    position: relative;
+    max-width: 100%;
+  }
+
+  /* Other's bubble */
+  .msg-row:not(.self) .bubble { background: #2a2a2a; color: #e8e8e8; }
+
+  /* Self bubble — same as others */
+  .self .bubble { background: #2a2a2a; color: #e8e8e8; }
+
+  /* At-me — no special styling */
+
+  /* Reply block */
+  .reply-block {
+    background: rgba(255,255,255,0.06);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: #999;
+    max-width: 100%;
+    line-height: 1.4;
+    position: relative;
+  }
+  .reply-sender { color: #aaa; margin-right: 6px; }
+  .reply-arrow {
+    float: right;
+    color: #666;
+    font-size: 13px;
+    margin-left: 8px;
+    border-top: 1.5px solid #666;
+    padding-top: 2px;
+    line-height: 1;
+  }
+  .reply-content { margin-top: 3px; color: #999; }
+
+  /* Inline QQ face */
+  .bubble img.qq-face {
+    display: inline-block; width: 24px; height: 24px;
+    vertical-align: middle; margin: 0 2px;
+  }
+
+  /* Image in bubble */
+  .bubble img.chat-img {
+    max-width: 200px; max-height: 200px;
+    border-radius: 6px; display: block; margin-top: 6px;
+  }
+
+  /* Image-only bubble — no background/padding */
+  .bubble.img-only {
+    background: transparent !important;
+    padding: 0;
+    border-radius: 0;
+  }
+
+  /* Self alignment */
+  .self .msg-body {
+    display: flex; flex-direction: column; align-items: flex-end;
+  }
+
+  /* ── Dock ── */
+  .dock-image {
+    flex-shrink: 0; background: #1a1a1a;
+    border-top: 1px solid #2a2a2a;
+  }
+  .dock-image img { width: 100%; display: block; }
+</style>
+</head>
+<body>
+
+<!-- Status bar -->
+<div class="status-bar">
+  <span class="time">{{status_time}}</span>
+  <div class="status-icons">
+    <svg width="20" height="15" viewBox="0 0 16 12"><path d="M1 8h2v4H1zM5 5h2v7H5zM9 2h2v10H9zM13 0h2v12h-2z"/></svg>
+    <svg width="20" height="15" viewBox="0 0 16 12"><path d="M8 2C5.2 2 2.7 3 .8 4.7l1.4 1.4C3.8 4.5 5.8 3.7 8 3.7s4.2.8 5.8 2.4l1.4-1.4C13.3 3 10.8 2 8 2zm0 4c-1.7 0-3.2.7-4.3 1.8l1.4 1.4C6 8.5 6.9 8 8 8s2 .5 2.9 1.2l1.4-1.4C11.2 6.7 9.7 6 8 6zm0 4c-.8 0-1.6.3-2.1.9L8 13l2.1-2.1C9.6 10.3 8.8 10 8 10z"/></svg>
+    <svg width="30" height="14" viewBox="0 0 26 12"><rect x="0" y="1" width="22" height="10" rx="2" stroke="#e0e0e0" stroke-width="1" fill="none"/><rect x="23" y="4" width="2" height="5" rx="1" fill="#e0e0e0" opacity="0.4"/><rect x="1.5" y="2.5" width="19" height="7" rx="1" fill="#e0e0e0"/></svg>
+  </div>
+</div>
+
+<!-- Header -->
+<div class="header">
+  <span class="back"><svg width="16" height="28" viewBox="0 0 12 20"><path d="M10 2L2 10L10 18"/></svg></span>
+  <span class="unread-badge">{{unread}}</span>
+  <span class="title">{{group_name}}</span><span class="member-count">({{member_count}})</span>
+  <span class="menu"><svg width="22" height="18" viewBox="0 0 22 18"><line x1="1" y1="2" x2="21" y2="2"/><line x1="1" y1="9" x2="21" y2="9"/><line x1="1" y1="16" x2="21" y2="16"/></svg></span>
+</div>
+
+<!-- Chat messages -->
+<div class="chat">
+  {% for item in messages %}
+    {% if item.type == "time" %}
+    <div class="time-sep"><span>{{item.text}}</span></div>
+    {% else %}
+    <div class="msg-row {% if item.is_self %}self{% endif %} {% if item.consecutive %}consecutive{% endif %}">
+      <div class="avatar" style="background:{{item.avatar_color}}">
+        <img src="https://q1.qlogo.cn/g?b=qq&nk={{item.sender_id}}&s=640"
+             onerror="this.parentElement.innerHTML='<span class=fallback>{{item.sender_name[0]}}</span>'" />
+      </div>
+      <div class="msg-body">
+        <div class="msg-name-row">
+          {% if item.badge %}
+          <span class="name-badge" style="background:{{item.badge_color}}">{{item.badge}}</span>
+          {% endif %}
+          {% if item.level_name %}
+          <span class="level-badge" style="background:{{item.level_color}}">{{item.level_name}}</span>
+          {% endif %}
+          <span class="msg-name">{{item.sender_name}}</span>
+        </div>
+        <div class="bubble {% if item.is_at_me %}at-me{% endif %} {% if item.img_only %}img-only{% endif %}">
+          {% if item.reply_text %}
+          <div class="reply-block">
+            <span class="reply-arrow">&#x2191;</span>
+            {% if item.reply_sender %}
+            <span class="reply-sender">{{item.reply_sender}}</span>
+            {% endif %}
+            {% if item.reply_sender or item.reply_time %}
+            <div class="reply-content">{{item.reply_content}}</div>
+            {% else %}
+            {{item.reply_text}}
+            {% endif %}
+          </div>
+          {% endif %}
+          <span>{{item.content}}</span>
+          {% for img_url in item.image_urls %}
+          <img class="chat-img" src="{{img_url}}" />
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  {% endfor %}
+</div>
+
+<!-- Dock -->
+<div class="dock-image">
+  <img src="{{dock_image}}" />
+</div>
+
+</body>
+</html>

@@ -41,6 +41,9 @@ def create_server(config: Config) -> FastMCP:
     bot = OneBotClient(config.onebot_base_url)
     ctx = ContextManager(config, bot=bot)
 
+    # Playwright browser instance (lazy-started for screenshot_chat)
+    browser_holder: dict = {"browser": None, "pw": None}
+
     @asynccontextmanager
     async def lifespan(app: FastMCP):
         # Startup: check NapCat is reachable, then backfill + start WS
@@ -49,9 +52,14 @@ def create_server(config: Config) -> FastMCP:
         ctx.start()
         logger.info("Context manager started (WS: %s)", config.ws_url)
         try:
-            yield {}
+            yield {"browser_holder": browser_holder}
         finally:
-            # Shutdown: stop WebSocket listener and close HTTP client
+            # Shutdown: stop WebSocket listener, browser, and HTTP client
+            if browser_holder["browser"]:
+                await browser_holder["browser"].close()
+                logger.info("Playwright browser closed")
+            if browser_holder["pw"]:
+                await browser_holder["pw"].stop()
             await ctx.stop()
             await bot.close()
             logger.info("Context manager and bot client stopped")
@@ -59,7 +67,7 @@ def create_server(config: Config) -> FastMCP:
     mcp = FastMCP("qq-agent-mcp", lifespan=lifespan)
 
     # Register all MCP tools
-    register_tools(mcp, config, bot, ctx)
+    register_tools(mcp, config, bot, ctx, browser_holder)
 
     return mcp
 
