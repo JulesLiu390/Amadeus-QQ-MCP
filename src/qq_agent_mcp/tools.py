@@ -54,6 +54,23 @@ def _text_to_segments(text: str) -> list[dict]:
     return segments or [{"type": "text", "data": {"text": text}}]
 
 
+# ── </分段> tag-based message splitting ────────────────
+_SPLIT_TAG_RE = re.compile(r"</\s*分段\s*>")
+
+
+def _split_by_tag(text: str) -> list[str] | None:
+    """Split text on </分段> tags.
+
+    Returns the list of non-empty, stripped segments if the tag is present;
+    returns None if no tag was found (so callers can fall through to other
+    splitting strategies).
+    """
+    if not text or not _SPLIT_TAG_RE.search(text):
+        return None
+    parts = _SPLIT_TAG_RE.split(text)
+    return [p.strip() for p in parts if p.strip()]
+
+
 # ── Duplicate send detection ────────────────────────────
 _DEDUP_WINDOW_SECONDS = 60.0  # 1 minute
 # key = "target_type:target_id" -> deque of (content_hash, send_time)
@@ -204,6 +221,45 @@ def _chunk_message(text: str, max_chars: int = CHUNK_MAX_CHARS) -> list[str]:
     for _i, _u in enumerate(_urls_found):
         result = [c.replace(f"{_URL_PLACEHOLDER}{_i}{_URL_PLACEHOLDER}", _u) for c in result]
     return result
+
+
+def _decide_chunks(
+    content: str, split_content: bool, num_chunks: int | None,
+) -> list[str]:
+    """Decide how to split outgoing message content into chunks.
+
+    Priority:
+      1. num_chunks == 1        → single message (no split)
+      2. num_chunks >= 2        → punctuation-split then merge into exactly N
+      3. </分段> tag in content → split on tag, strip the tag, keep segments as-is
+      4. split_content & ≤100   → punctuation split for short messages
+      5. default                → single message
+    """
+    stripped = content.strip()
+
+    if num_chunks is not None and num_chunks == 1:
+        return [stripped] if stripped else []
+
+    if num_chunks is not None and num_chunks >= 2 and stripped:
+        fine_chunks = _chunk_message(content)
+        if len(fine_chunks) <= num_chunks:
+            return fine_chunks
+        chunks: list[str] = []
+        per_group = len(fine_chunks) / num_chunks
+        for i in range(num_chunks):
+            start = round(i * per_group)
+            end = round((i + 1) * per_group)
+            chunks.append("\n".join(fine_chunks[start:end]))
+        return chunks
+
+    tag_chunks = _split_by_tag(content)
+    if tag_chunks is not None:
+        return tag_chunks
+
+    if split_content and len(stripped) <= 100:
+        return _chunk_message(content)
+
+    return [stripped] if stripped else []
 
 
 def register_tools(
@@ -468,19 +524,28 @@ def register_tools(
     ) -> dict:
         """Send a message to a monitored group or whitelisted friend.
 
+        Preferred way to send multiple messages: insert `</分段>` in the content
+        at each desired split point. Each segment becomes its own message; the
+        tag itself is stripped. Example:
+            content = "吃了吗</分段>今天忙不忙"
+        sends two messages: "吃了吗" and "今天忙不忙". Use this whenever you want
+        to split a reply into multiple messages — it is more natural than
+        `num_chunks` because you choose the split points yourself.
+
         Args:
             target: Group ID or friend QQ ID.
-            content: Text message content.
+            content: Text message content. May contain `</分段>` markers to
+                specify exact split points between messages.
             target_type: "group" (default) or "private".
             reply_to: Optional message ID to reply to.
-            split_content: Whether to split long messages into multiple chunks
-                with typing delay (default False). Set to True to enable
-                automatic splitting by punctuation for short messages.
-            num_chunks: If set, split the message into exactly this many chunks
-                using natural punctuation boundaries. Overrides split_content.
-                The message is first split by punctuation, then the fine chunks
-                are merged into exactly num_chunks groups (e.g. num_chunks=3
-                sends exactly 3 messages with typing delays between them).
+            split_content: If True (and content has no `</分段>` tag), auto-split
+                short messages (≤100 chars) on punctuation. Default False.
+            num_chunks: Force exactly this many chunks via punctuation-based
+                merging. Overrides the `</分段>` tag. Set to 1 to force a single
+                message even when the content contains `</分段>`.
+
+        Split-point priority: num_chunks=1 → num_chunks≥2 → `</分段>` tag →
+        split_content → single message.
         """
         # Whitelist check
         if target_type == "group":
@@ -519,28 +584,7 @@ def register_tools(
         if dup_warning:
             return {"success": False, "error": dup_warning}
 
-        # Split long messages into chunks (or send as one)
-        stripped = content.strip()
-        if num_chunks is not None and num_chunks == 1:
-            # Caller explicitly requested a single message — no splitting
-            chunks = [stripped] if stripped else []
-        elif num_chunks is not None and num_chunks >= 2 and stripped:
-            # Split by punctuation first, then merge into exactly num_chunks groups
-            fine_chunks = _chunk_message(content)
-            if len(fine_chunks) <= num_chunks:
-                chunks = fine_chunks
-            else:
-                chunks = []
-                per_group = len(fine_chunks) / num_chunks
-                for i in range(num_chunks):
-                    start = round(i * per_group)
-                    end = round((i + 1) * per_group)
-                    chunks.append("\n".join(fine_chunks[start:end]))
-        elif split_content and len(stripped) <= 100:
-            # Auto split by punctuation (existing logic)
-            chunks = _chunk_message(content)
-        else:
-            chunks = [stripped] if stripped else []
+        chunks = _decide_chunks(content, split_content, num_chunks)
         if not chunks:
             return {"success": False, "error": "Empty message content"}
 
@@ -665,6 +709,65 @@ def register_tools(
             sender_id=config.qq,
             sender_name="bot",
             content="[图片]",
+            timestamp=datetime.now(CST).isoformat(),
+            message_id=msg_id,
+            is_self=True,
+        )
+        ctx.add_message(target, target_type, bot_msg)
+
+        return {
+            "success": True,
+            "message_id": msg_id,
+            "target": target,
+            "target_type": target_type,
+            "timestamp": datetime.now(CST).isoformat(),
+        }
+
+    @mcp.tool()
+    async def send_voice(
+        target: str,
+        audio: str,
+        target_type: str = "group",
+    ) -> dict:
+        """Send a voice message to a monitored group or whitelisted friend.
+
+        NapCat auto-converts common formats (MP3/WAV/AMR/OGG/FLAC) to SILK.
+
+        Args:
+            target: Group ID or friend QQ ID.
+            audio: Base64-encoded audio data (without the base64:// prefix).
+            target_type: "group" (default) or "private".
+        """
+        # Whitelist check
+        if target_type == "group":
+            if not config.is_group_monitored(target):
+                return {"success": False, "error": f"Group {target} is not monitored"}
+        elif target_type == "private":
+            if not config.is_friend_monitored(target):
+                return {
+                    "success": False,
+                    "error": f"User {target} is not in friends whitelist",
+                }
+        else:
+            return {"success": False, "error": f"Invalid target_type: {target_type}"}
+
+        msg = [{"type": "record", "data": {"file": f"base64://{audio}"}}]
+
+        try:
+            if target_type == "group":
+                result = await bot.send_group_msg(target, msg)
+            else:
+                result = await bot.send_private_msg(target, msg)
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+        msg_id = str(result.get("message_id", ""))
+
+        # Write bot's own message into buffer
+        bot_msg = Message(
+            sender_id=config.qq,
+            sender_name="bot",
+            content="[语音]",
             timestamp=datetime.now(CST).isoformat(),
             message_id=msg_id,
             is_self=True,
