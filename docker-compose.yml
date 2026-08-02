@@ -5,7 +5,7 @@
     hostname: "desktop"
     restart: always
     environment:
-      - ACCOUNT=3569438042
+      - ACCOUNT=3825478002
     ports:
       - "3000:3000"   # OneBot HTTP API
       - "3001:3001"   # OneBot WebSocket
