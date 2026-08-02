@@ -1,4 +1,4 @@
-uv run python scripts/test-mcp-linux.py# Amadeus-QQ-MCP
+# Amadeus-QQ-MCP
 
 MCP Server，通过 NapCatQQ (OneBot v11) 让 AI 客户端收发 QQ 消息。支持群聊和私聊。
 
@@ -13,17 +13,31 @@ MCP Server，通过 NapCatQQ (OneBot v11) 让 AI 客户端收发 QQ 消息。支
 
 ## 前置条件
 
-- Docker
+- 已安装并运行的原生 NapCatQQ（OneBot v11）
 - Python 3.11+
 - [uv](https://github.com/astral-sh/uv)
 
-> **Linux**: 以上依赖可通过 `scripts/install-linux.sh` 一键安装。
->
-> **Windows**: 需手动安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/)，uv 可通过 `irm https://astral.sh/uv/install.ps1 | iex` 安装。
+PetGPT 的内置 QQ Connector 会按需管理 uv、Python 和本项目，用户不需要手动安装
+Python，也不使用 Docker。独立运行本项目时，可以使用 NapCat 官方提供的 Windows
+OneKey/Shell、Linux AppImage 或 macOS Installer。
+
+## 原生 NapCat 快速接入（推荐）
+
+1. 启动原生 NapCat，并在 WebUI 中完成 QQ 扫码登录。
+2. 创建仅监听 `127.0.0.1` 的 OneBot HTTP Server（默认端口 3000）。
+3. 创建仅监听 `127.0.0.1` 的 OneBot WebSocket Server（默认端口 3001）。
+4. 两个 Server 使用同一个随机 token。
+5. 启动 MCP：
+
+```bash
+uv run qq-agent-mcp --qq 你的QQ号 --access-token 你的OneBot访问令牌
+```
+
+PetGPT 会自动完成第 2～5 步，并在注册前验证 Social Agent 依赖的工具契约。
 
 ---
 
-## 快速开始（Windows）
+## 旧版 Docker 快速开始（Windows，可选）
 
 ### 1. 配置 NapCat
 
@@ -78,7 +92,7 @@ uv run qq-agent-mcp --qq 你的QQ号
 
 ---
 
-## 快速开始（Linux）
+## 旧版 Docker 快速开始（Linux，可选）
 
 ### 1. 安装依赖
 
@@ -140,11 +154,16 @@ uv run qq-agent-mcp --qq 你的QQ号 \
   --napcat-host 127.0.0.1 \
   --napcat-port 3000 \
   --ws-port 3001 \
+  --access-token 你的OneBot访问令牌 \
   --groups 群号1,群号2 \
   --friends 好友QQ1 \
   --buffer-size 100 \
   --log-level info
 ```
+
+`--access-token` 也可以通过 `NAPCAT_ACCESS_TOKEN` 环境变量提供。建议为
+NapCat 的 OneBot HTTP 和 WebSocket 服务配置同一个随机访问令牌，并只监听
+本机地址。
 
 ### 6. 配置 MCP 客户端
 

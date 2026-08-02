@@ -344,7 +344,10 @@ class ContextManager:
             try:
                 async with aiohttp.ClientSession() as session:
                     logger.info("Connecting to WebSocket: %s", self.config.ws_url)
-                    async with session.ws_connect(self.config.ws_url) as ws:
+                    async with session.ws_connect(
+                        self.config.ws_url,
+                        headers=self.config.auth_headers,
+                    ) as ws:
                         logger.info("WebSocket connected")
                         retry_delay = 1.0  # reset on success
                         async for raw_msg in ws:

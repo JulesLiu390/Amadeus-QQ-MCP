@@ -20,9 +20,15 @@ class OneBotError(Exception):
 class OneBotClient:
     """Async client for NapCat's OneBot v11 HTTP API."""
 
-    def __init__(self, base_url: str, timeout: float = 10.0):
+    def __init__(
+        self,
+        base_url: str,
+        timeout: float = 10.0,
+        access_token: str | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.timeout = aiohttp.ClientTimeout(total=timeout)
+        self.access_token = access_token
         self._session: aiohttp.ClientSession | None = None
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
@@ -44,7 +50,16 @@ class OneBotClient:
 
         logger.debug("OneBot call: %s %s", action, payload)
 
-        async with session.post(url, json=payload) as resp:
+        headers = {}
+        if self.access_token:
+            headers["Authorization"] = f"Bearer {self.access_token}"
+
+        async with session.post(url, json=payload, headers=headers) as resp:
+            if resp.status in (401, 403):
+                raise OneBotError(action, resp.status, "authentication failed")
+            if resp.status >= 400:
+                body = await resp.text()
+                raise OneBotError(action, resp.status, body[:200])
             result = await resp.json()
 
         retcode = result.get("retcode", -1)

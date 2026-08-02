@@ -38,7 +38,10 @@ async def _wait_ready(bot: OneBotClient, timeout: float = MAX_READY_WAIT) -> boo
 
 def create_server(config: Config) -> FastMCP:
     """Create and configure the MCP Server."""
-    bot = OneBotClient(config.onebot_base_url)
+    bot = OneBotClient(
+        config.onebot_base_url,
+        access_token=config.access_token,
+    )
     ctx = ContextManager(config, bot=bot)
 
     # Playwright browser instance (lazy-started for screenshot_chat)

@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import os
 import sys
 
 from .config import Config
@@ -30,6 +31,11 @@ def parse_args() -> Config:
         type=int,
         default=3001,
         help="NapCat WebSocket port (default: 3001)",
+    )
+    parser.add_argument(
+        "--access-token",
+        default=os.environ.get("NAPCAT_ACCESS_TOKEN"),
+        help="OneBot HTTP/WebSocket access token (or NAPCAT_ACCESS_TOKEN)",
     )
     parser.add_argument(
         "--groups",
@@ -75,6 +81,7 @@ def parse_args() -> Config:
         napcat_host=args.napcat_host,
         napcat_port=args.napcat_port,
         ws_port=args.ws_port,
+        access_token=args.access_token,
         groups=groups,
         friends=friends,
         buffer_size=args.buffer_size,
